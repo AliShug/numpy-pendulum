@@ -5,20 +5,23 @@ import sys
 
 #  from pyquaternion import Quaternion    # would be useful for 3D simulation
 import numpy as np
+from scipy.linalg import block_diag
 
 window = 0  # number of the glut window
 theta = 0.0
-simTime = 0
+sim_time = 0
 dT = 0.01
-simRun = True
+sim_running = True
 RAD_TO_DEG = 180.0 / 3.1416
+GRAVITY = -9.81
+link1 = link2 = None
 
 
 #####################################################
-#### Link class, i.e., for a rigid body
+# Link class, i.e., for a rigid body
 #####################################################
 
-class Link:
+class Link(object):
     color = [0, 0, 0]  # draw color
     size = [1, 1, 1]  # dimensions
     mass = 1.0  # mass in kg
@@ -39,7 +42,7 @@ class Link:
 
 
 #####################################################
-#### main():   launches app
+# main():   launches app
 #####################################################
 
 def main():
@@ -65,16 +68,16 @@ def main():
 
 
 #####################################################
-#### keyPressed():  called whenever a key is pressed
+# keyPressed():  called whenever a key is pressed
 #####################################################
 
 def reset_sim():
     global link1, link2
-    global simTime, simRun
+    global sim_time, sim_running
 
-    printf("Simulation reset\n")
-    simRun = True
-    simTime = 0
+    print("Simulation reset")
+    sim_running = True
+    sim_time = 0
 
     link1.size = [0.04, 1.0, 0.12]
     link1.color = [1, 0.9, 0.9]
@@ -92,17 +95,17 @@ def reset_sim():
 
 
 #####################################################
-#### keyPressed():  called whenever a key is pressed
+# keyPressed():  called whenever a key is pressed
 #####################################################
 
 def key_pressed(key, x, y):
-    global simRun
+    global sim_running
     ch = key.decode("utf-8")
     if ch == ' ':  # toggle the simulation
-        if simRun:
-            simRun = False
+        if sim_running:
+            sim_running = False
         else:
-            simRun = True
+            sim_running = True
     elif ch == chr(27):  # ESC key
         sys.exit()
     elif ch == 'q':  # quit
@@ -112,22 +115,31 @@ def key_pressed(key, x, y):
 
 
 #####################################################
-#### SimWorld():  simulates a time step
+# SimWorld():  simulates a time step
 #####################################################
 
 def simulate_world():
-    global simTime, dT, simRun
+    global sim_time, dT, sim_running
     global link1, link2
+    global GRAVITY
 
-    deltaTheta = 2.4
-    if (simRun == False):  # is simulation stopped?
+    delta_theta = 2.4
+    if not sim_running:  # is simulation stopped?
         return
 
     # solve for the equations of motion (simple in this case!)
-    acc1 = np.array([0, -10, 0])  # linear acceleration = [0, -G, 0]
-    acc2 = np.array([0, -10, 0])  # linear acceleration = [0, -G, 0]
+    acc1 = np.array([0, GRAVITY, 0])  # linear acceleration = [0, -G, 0]
+    acc2 = np.array([0, GRAVITY, 0])  # linear acceleration = [0, -G, 0]
     omega_dot1 = 0.0  # assume no angular acceleration
     omega_dot2 = 0.0  # assume no angular acceleration
+
+    M1 = link1.mass * np.identity(3)
+    I1 = link1.izz * np.identity(3)
+    M2 = link2.mass * np.identity(3)
+    I2 = link2.izz * np.identity(3)
+    a = block_diag(M1, I1, M2, I2)
+    b = np.concatenate([acc1, [0, 0, omega_dot1], acc2, [0, 0, omega_dot2]])
+    print(np.linalg.solve(a, b))
 
     #  for the constrained one-link pendulum, and the 4-link pendulum,
     #  you will want to build the equations of motion as a linear system, and then solve that.
@@ -148,15 +160,15 @@ def simulate_world():
     link2.theta += link2.omega * dT
     link2.omega += omega_dot2 * dT
 
-    simTime += dT
+    sim_time += dT
 
     # draw the updated state
     draw_world()
-    printf("simTime=%.2f\n", simTime)
+    print("simTime=%.2f" % sim_time)
 
 
 #####################################################
-#### DrawWorld():  draw the world
+# DrawWorld():  draw the world
 #####################################################
 
 def draw_world():
@@ -174,10 +186,10 @@ def draw_world():
 
 
 #####################################################
-#### initGL():  does standard OpenGL initialization work
+# initGL():  does standard OpenGL initialization work
 #####################################################
 
-def init_gl(Width, Height):  # We call this right after our OpenGL window is created.
+def init_gl(width, height):  # We call this right after our OpenGL window is created.
     glClearColor(1.0, 1.0, 0.9, 0.0)  # This Will Clear The Background Color To Black
     glClearDepth(1.0)  # Enables Clearing Of The Depth Buffer
     glDepthFunc(GL_LESS)  # The Type Of Depth Test To Do
@@ -188,27 +200,27 @@ def init_gl(Width, Height):  # We call this right after our OpenGL window is cre
     glShadeModel(GL_SMOOTH)  # Enables Smooth Color Shading
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()  # Reset The Projection Matrix
-    gluPerspective(45.0, float(Width) / float(Height), 0.1, 100.0)
+    gluPerspective(45.0, float(width) / float(height), 0.1, 100.0)
     glMatrixMode(GL_MODELVIEW)
 
 
 #####################################################
-#### ReSizeGLScene():    called when window is resized
+# ReSizeGLScene():    called when window is resized
 #####################################################
 
-def resize_gl_scene(Width, Height):
-    if Height == 0:  # Prevent A Divide By Zero If The Window Is Too Small
-        Height = 1
-    glViewport(0, 0, Width, Height)  # Reset The Current Viewport And Perspective Transformation
+def resize_gl_scene(width, height):
+    if height == 0:  # Prevent A Divide By Zero If The Window Is Too Small
+        height = 1
+    glViewport(0, 0, width, height)  # Reset The Current Viewport And Perspective Transformation
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
-    gluPerspective(45.0, float(Width) / float(Height), 0.1,
+    gluPerspective(45.0, float(width) / float(height), 0.1,
                    100.0)  # 45 deg horizontal field of view, aspect ratio, near, far
     glMatrixMode(GL_MODELVIEW)
 
 
 #####################################################
-#### DrawOrigin():  draws RGB lines for XYZ origin of coordinate system
+# DrawOrigin():  draws RGB lines for XYZ origin of coordinate system
 #####################################################
 
 def draw_origin():
@@ -234,7 +246,7 @@ def draw_origin():
 
 
 #####################################################
-#### DrawCube():  draws a cube that spans from (-1,-1,-1) to (1,1,1)
+# DrawCube():  draws a cube that spans from (-1,-1,-1) to (1,1,1)
 #####################################################
 
 def draw_cube():
@@ -317,14 +329,6 @@ def draw_cube():
     glVertex3f(1.0, -1.0, 1.0)  # Bottom Left Of The Quad (Right)
     glVertex3f(1.0, -1.0, -1.0)  # Bottom Right Of The Quad (Right)
     glEnd()  # Done Drawing The Quad
-
-
-####################################################
-# printf()
-####################################################
-
-def printf(format, *args):
-    sys.stdout.write(format % args)
 
 
 ################################################################################
