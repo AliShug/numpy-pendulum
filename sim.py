@@ -10,22 +10,18 @@ from scipy.linalg import block_diag
 window = 0  # number of the glut window
 theta = 0.0
 sim_time = 0
-dT = 0.01
+dT = 0.005
 sim_running = True
 RAD_TO_DEG = 180.0 / 3.1416
 GRAVITY = -9.81
 link1 = link2 = None
 
 
-#####################################################
-# Link class, i.e., for a rigid body
-#####################################################
-
 class Link(object):
     color = [0, 0, 0]  # draw color
     size = [1, 1, 1]  # dimensions
     mass = 1.0  # mass in kg
-    izz = 1.0  # moment of inertia about z-axis
+    inertia = np.identity(3)
     theta = 0  # 2D orientation  (will need to change for 3D)
     omega = 0  # 2D angular velocity
     posn = np.array([0.0, 0.0, 0.0])  # 3D position (keep z=0 for 2D)
@@ -40,10 +36,15 @@ class Link(object):
         draw_cube()  # draw a scaled cube
         glPopMatrix()  # restore old coord frame
 
+    def set_cuboid(self, mass, w, h, d):
+        """Creates a cuboid of the specified width, depth and height (x, y, z respectively)"""
+        self.mass = mass
+        self.inertia = mass/12 * np.array([[h**2+d**2, 0, 0], [0, w**2+d**2, 0], [0, 0, w**2+h**2]])
+        self.size = np.array([w, h, d])
 
-#####################################################
-# main():   launches app
-#####################################################
+    def get_r(self):
+        return 0.5*np.array([np.cos(self.theta + np.pi/2), np.sin(self.theta + np.pi/2), 0])
+
 
 def main():
     global window
@@ -67,10 +68,6 @@ def main():
     glutMainLoop()  # start event processing loop
 
 
-#####################################################
-# keyPressed():  called whenever a key is pressed
-#####################################################
-
 def reset_sim():
     global link1, link2
     global sim_time, sim_running
@@ -79,24 +76,20 @@ def reset_sim():
     sim_running = True
     sim_time = 0
 
-    link1.size = [0.04, 1.0, 0.12]
+    link1.set_cuboid(1, 0.04, 1.0, 0.12)
     link1.color = [1, 0.9, 0.9]
-    link1.posn = np.array([0.0, 0.0, 0.0])
-    link1.vel = np.array([0.0, 2.0, 0.0])
-    link1.theta = 0.4
-    link1.omega = 3  # radians per second
+    link1.posn = np.array([0.5, 0.0, 0.0])
+    link1.vel = np.array([0.0, 0.0, 0.0])
+    link1.theta = np.pi/4
+    link1.omega = np.array([0., 0., 0.])
 
-    link2.size = [0.04, 1.0, 0.12]
+    link2.set_cuboid(1, 0.04, 1.0, 0.12)
     link2.color = [0.9, 0.9, 1.0]
     link2.posn = np.array([1.0, 0.0, 0.0])
-    link2.vel = np.array([0.0, 4.0, 0.0])
-    link2.theta = -0.2
-    link2.omega = 0  # radians per second
+    link2.vel = np.array([0.0, 0.0, 0.0])
+    link2.theta = np.pi/4
+    link2.omega = np.array([0., 0., 0.])  # radians per second
 
-
-#####################################################
-# keyPressed():  called whenever a key is pressed
-#####################################################
 
 def key_pressed(key, x, y):
     global sim_running
@@ -114,50 +107,79 @@ def key_pressed(key, x, y):
         reset_sim()
 
 
-#####################################################
-# SimWorld():  simulates a time step
-#####################################################
+def funkify(v):
+    return np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+
 
 def simulate_world():
     global sim_time, dT, sim_running
     global link1, link2
     global GRAVITY
 
-    delta_theta = 2.4
     if not sim_running:  # is simulation stopped?
         return
 
     # solve for the equations of motion (simple in this case!)
-    acc1 = np.array([0, GRAVITY, 0])  # linear acceleration = [0, -G, 0]
-    acc2 = np.array([0, GRAVITY, 0])  # linear acceleration = [0, -G, 0]
-    omega_dot1 = 0.0  # assume no angular acceleration
-    omega_dot2 = 0.0  # assume no angular acceleration
+    grav = np.array([0, GRAVITY, 0])  # linear acceleration = [0, -G, 0]
 
+    # construct dynamics matrix
     M1 = link1.mass * np.identity(3)
-    I1 = link1.izz * np.identity(3)
     M2 = link2.mass * np.identity(3)
-    I2 = link2.izz * np.identity(3)
-    a = block_diag(M1, I1, M2, I2)
-    b = np.concatenate([acc1, [0, 0, omega_dot1], acc2, [0, 0, omega_dot2]])
-    print(np.linalg.solve(a, b))
-
-    #  for the constrained one-link pendulum, and the 4-link pendulum,
-    #  you will want to build the equations of motion as a linear system, and then solve that.
-    #  Here is a simple example of using numpy to solve a linear system.
-    a = np.array([[2, -4, 4], [34, 3, -1], [1, 1, 1]])
-    b = np.array([8, 30, 108])
-    x = np.linalg.solve(a, b)
-    #  print(x)   # [ -2.17647059  53.54411765  56.63235294]
+    I1 = link1.inertia
+    I2 = link2.inertia
+    w1 = link1.omega
+    w2 = link2.omega
+    r0 = link1.get_r()
+    r1 = -r0
+    r2 = link2.get_r()
+    funky_r0 = funkify(r0)
+    funky_r1 = funkify(r1)
+    funky_r2 = funkify(r2)
+    M1_g = M1 @ grav
+    M2_g = M2 @ grav
+    omega_I1 = np.cross(-w1, I1@w1)
+    omega_I2 = np.cross(-w2, I2@w2)
+    omega_r0 = np.cross(w1, np.cross(w1, r0))
+    omega_omega = np.cross(w1, np.cross(w2, r1)) - np.cross(w2, np.cross(w2, r2))
+    dim = 18
+    mat = np.zeros((dim, dim))
+    mat[0:3, 0:3] = M1
+    mat[0:3, 12:15] = -np.identity(3)
+    mat[0:3, 15:18] = -np.identity(3)
+    mat[3:6, 3:6] = I1
+    mat[3:6, 12:15] = -funky_r0
+    mat[3:6, 15:18] = -funky_r1
+    mat[6:9, 6:9] = M2
+    mat[6:9, 15:18] = np.identity(3)
+    mat[9:12, 9:12] = I2
+    mat[9:12, 15:18] = funky_r2
+    mat[12:15, 0:3] = -np.identity(3)
+    mat[12:15, 3:6] = funky_r0
+    mat[15:18, 0:3] = -np.identity(3)
+    mat[15:18, 3:6] = funky_r1
+    mat[15:18, 6:9] = np.identity(3)
+    mat[15:18, 9:12] = -funky_r2
+    # solve
+    rhs = np.concatenate([M1_g, omega_I1, M2_g, omega_I2, omega_r0, omega_omega])
+    results = np.linalg.solve(mat, rhs)
+    # extract results
+    acc1 = results[0:3]
+    omega_dot1 = results[3:6]
+    acc2 = results[6:9]
+    omega_dot2 = results[9:12]
+    f1 = results[12:15]
+    f2 = results[15:18]
+    print(f1, f2)
 
     # explicit Euler integration to update the state
     link1.posn += link1.vel * dT
     link1.vel += acc1 * dT
-    link1.theta += link1.omega * dT
-    link2.omega += omega_dot1 * dT
+    link1.theta += link1.omega[2] * dT
+    link1.omega += omega_dot1 * dT
 
     link2.posn += link2.vel * dT
     link2.vel += acc2 * dT
-    link2.theta += link2.omega * dT
+    link2.theta += link2.omega[2] * dT
     link2.omega += omega_dot2 * dT
 
     sim_time += dT
@@ -166,10 +188,6 @@ def simulate_world():
     draw_world()
     print("simTime=%.2f" % sim_time)
 
-
-#####################################################
-# DrawWorld():  draw the world
-#####################################################
 
 def draw_world():
     global link1, link2
@@ -184,10 +202,6 @@ def draw_world():
 
     glutSwapBuffers()  # swap the buffers to display what was just drawn
 
-
-#####################################################
-# initGL():  does standard OpenGL initialization work
-#####################################################
 
 def init_gl(width, height):  # We call this right after our OpenGL window is created.
     glClearColor(1.0, 1.0, 0.9, 0.0)  # This Will Clear The Background Color To Black
@@ -204,10 +218,6 @@ def init_gl(width, height):  # We call this right after our OpenGL window is cre
     glMatrixMode(GL_MODELVIEW)
 
 
-#####################################################
-# ReSizeGLScene():    called when window is resized
-#####################################################
-
 def resize_gl_scene(width, height):
     if height == 0:  # Prevent A Divide By Zero If The Window Is Too Small
         height = 1
@@ -218,10 +228,6 @@ def resize_gl_scene(width, height):
                    100.0)  # 45 deg horizontal field of view, aspect ratio, near, far
     glMatrixMode(GL_MODELVIEW)
 
-
-#####################################################
-# DrawOrigin():  draws RGB lines for XYZ origin of coordinate system
-#####################################################
 
 def draw_origin():
     glLineWidth(3.0)
@@ -244,10 +250,6 @@ def draw_origin():
     glVertex3f(0, 0, 1)
     glEnd()
 
-
-#####################################################
-# DrawCube():  draws a cube that spans from (-1,-1,-1) to (1,1,1)
-#####################################################
 
 def draw_cube():
     glScalef(0.5, 0.5, 0.5)  # dimensions below are for a 2x2x2 cube, so scale it down by a half first
@@ -330,9 +332,6 @@ def draw_cube():
     glVertex3f(1.0, -1.0, -1.0)  # Bottom Right Of The Quad (Right)
     glEnd()  # Done Drawing The Quad
 
-
-################################################################################
-# start the app
 
 print("Hit ESC key to quit.")
 main()
