@@ -5,16 +5,17 @@ import sys
 
 #  from pyquaternion import Quaternion    # would be useful for 3D simulation
 import numpy as np
-from scipy.linalg import block_diag
 
 window = 0  # number of the glut window
 theta = 0.0
 sim_time = 0
-dT = 0.005
+dT = 0.01
 sim_running = True
-RAD_TO_DEG = 180.0 / 3.1416
+RAD_TO_DEG = 180.0 / np.pi
 GRAVITY = -9.81
 link1 = link2 = None
+kp = 0.0
+kd = 0.0
 
 
 class Link(object):
@@ -24,17 +25,23 @@ class Link(object):
     inertia = np.identity(3)
     theta = 0  # 2D orientation  (will need to change for 3D)
     omega = 0  # 2D angular velocity
-    posn = np.array([0.0, 0.0, 0.0])  # 3D position (keep z=0 for 2D)
+    pos = np.array([0.0, 0.0, 0.0])  # 3D position (keep z=0 for 2D)
     vel = np.array([0.0, 0.0, 0.0])  # initial velocity
+
+    display_force = np.array([0.0, 0.0, 0.0])
 
     def draw(self):  # steps to draw a link
         glPushMatrix()  # save copy of coord frame
-        glTranslatef(self.posn[0], self.posn[1], self.posn[2])  # move
+        glTranslatef(self.pos[0], self.pos[1], self.pos[2])  # move
         glRotatef(self.theta * RAD_TO_DEG, 0, 0, 1)  # rotate
         glScale(self.size[0], self.size[1], self.size[2])  # set size
         glColor3f(self.color[0], self.color[1], self.color[2])  # set colour
         draw_cube()  # draw a scaled cube
         glPopMatrix()  # restore old coord frame
+        glBegin(GL_LINES)
+        glVertex3fv(self.pos + self.get_r())
+        glVertex3fv(self.pos + self.get_r() + self.display_force)
+        glEnd()
 
     def set_cuboid(self, mass, w, h, d):
         """Creates a cuboid of the specified width, depth and height (x, y, z respectively)"""
@@ -43,7 +50,7 @@ class Link(object):
         self.size = np.array([w, h, d])
 
     def get_r(self):
-        return 0.5*np.array([np.cos(self.theta + np.pi/2), np.sin(self.theta + np.pi/2), 0])
+        return (self.size[1]/2)*np.array([np.cos(self.theta + np.pi/2), np.sin(self.theta + np.pi/2), 0])
 
 
 def main():
@@ -78,17 +85,17 @@ def reset_sim():
 
     link1.set_cuboid(1, 0.04, 1.0, 0.12)
     link1.color = [1, 0.9, 0.9]
-    link1.posn = np.array([0.5, 0.0, 0.0])
+    link1.pos = np.array([0.0, 0.0, 0.0])
     link1.vel = np.array([0.0, 0.0, 0.0])
-    link1.theta = np.pi/4
+    link1.theta = 0.0
     link1.omega = np.array([0., 0., 0.])
 
     link2.set_cuboid(1, 0.04, 1.0, 0.12)
     link2.color = [0.9, 0.9, 1.0]
-    link2.posn = np.array([1.0, 0.0, 0.0])
+    link2.pos = np.array([0.0, -1.0, 0.0])
     link2.vel = np.array([0.0, 0.0, 0.0])
-    link2.theta = np.pi/4
-    link2.omega = np.array([0., 0., 0.])  # radians per second
+    link2.theta = 0.0
+    link2.omega = np.array([0., 0., -0.1])  # radians per second
 
 
 def key_pressed(key, x, y):
@@ -115,6 +122,7 @@ def simulate_world():
     global sim_time, dT, sim_running
     global link1, link2
     global GRAVITY
+    global kp, kd
 
     if not sim_running:  # is simulation stopped?
         return
@@ -125,6 +133,8 @@ def simulate_world():
     # construct dynamics matrix
     M1 = link1.mass * np.identity(3)
     M2 = link2.mass * np.identity(3)
+    M1_g = M1 @ grav
+    M2_g = M2 @ grav
     I1 = link1.inertia
     I2 = link2.inertia
     w1 = link1.omega
@@ -135,12 +145,12 @@ def simulate_world():
     funky_r0 = funkify(r0)
     funky_r1 = funkify(r1)
     funky_r2 = funkify(r2)
-    M1_g = M1 @ grav
-    M2_g = M2 @ grav
     omega_I1 = np.cross(-w1, I1@w1)
     omega_I2 = np.cross(-w2, I2@w2)
     omega_r0 = np.cross(w1, np.cross(w1, r0))
-    omega_omega = np.cross(w1, np.cross(w2, r1)) - np.cross(w2, np.cross(w2, r2))
+    # pos_drift = (link1.pos + r1) - (link2.pos + r2)
+    # vel_drift = (link1.vel + np.cross(w1, r1)) - (link2.vel + np.cross(w2, r2))
+    constraint = np.cross(w1, np.cross(w1, r1)) - np.cross(w2, np.cross(w2, r2))# - kp*pos_drift - kd*vel_drift
     dim = 18
     mat = np.zeros((dim, dim))
     mat[0:3, 0:3] = M1
@@ -160,7 +170,7 @@ def simulate_world():
     mat[15:18, 6:9] = np.identity(3)
     mat[15:18, 9:12] = -funky_r2
     # solve
-    rhs = np.concatenate([M1_g, omega_I1, M2_g, omega_I2, omega_r0, omega_omega])
+    rhs = np.concatenate([M1_g, omega_I1, M2_g, omega_I2, omega_r0, constraint])
     results = np.linalg.solve(mat, rhs)
     # extract results
     acc1 = results[0:3]
@@ -169,15 +179,18 @@ def simulate_world():
     omega_dot2 = results[9:12]
     f1 = results[12:15]
     f2 = results[15:18]
-    print(f1, f2)
+    link1.display_force = f1
+    link2.display_force = -f2
+    # print(f1, f2)
+    print(link1.pos+r1, link2.pos+r2)
 
     # explicit Euler integration to update the state
-    link1.posn += link1.vel * dT
+    link1.pos += link1.vel * dT
     link1.vel += acc1 * dT
     link1.theta += link1.omega[2] * dT
     link1.omega += omega_dot1 * dT
 
-    link2.posn += link2.vel * dT
+    link2.pos += link2.vel * dT
     link2.vel += acc2 * dT
     link2.theta += link2.omega[2] * dT
     link2.omega += omega_dot2 * dT
