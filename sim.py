@@ -83,14 +83,14 @@ def reset_sim():
     sim_running = True
     sim_time = 0
 
-    link1.set_cuboid(1, 0.04, 1.0, 0.12)
+    link1.set_cuboid(1.0, 0.04, 1.0, 0.12)
     link1.color = [1, 0.9, 0.9]
     link1.pos = np.array([0.0, 0.0, 0.0])
     link1.vel = np.array([0.0, 0.0, 0.0])
     link1.theta = 0.0
     link1.omega = np.array([0., 0., 0.])
 
-    link2.set_cuboid(1, 0.04, 1.0, 0.12)
+    link2.set_cuboid(1.0, 0.04, 1.0, 0.12)
     link2.color = [0.9, 0.9, 1.0]
     link2.pos = np.array([0.0, -1.0, 0.0])
     link2.vel = np.array([0.0, 0.0, 0.0])
@@ -179,10 +179,14 @@ def simulate_world():
     omega_dot2 = results[9:12]
     f1 = results[12:15]
     f2 = results[15:18]
-    link1.display_force = f1
-    link2.display_force = -f2
+    link1.display_force = f1 + M1_g
+    link2.display_force = -f2 + M2_g
     # print(f1, f2)
-    print(link1.pos+r1, link2.pos+r2)
+
+    # show error - diff between point accelerations
+    p1c_acc = acc1 + np.cross(omega_dot1, r1) + np.cross(w1, np.cross(w1, r1))
+    p2c_acc = acc2 + np.cross(omega_dot2, r2) + np.cross(w2, np.cross(w2, r2))
+    print(np.linalg.norm(p1c_acc-p2c_acc))
 
     # explicit Euler integration to update the state
     link1.pos += link1.vel * dT
