@@ -50,7 +50,7 @@ class Link(object):
         self.size = np.array([w, h, d])
 
     def get_r(self):
-        return (self.size[1]/2)*np.array([np.cos(self.theta + np.pi/2), np.sin(self.theta + np.pi/2), 0])
+        return (self.size[1]/2)*np.array([-np.sin(self.theta), np.cos(self.theta), 0])
 
 
 def main():
@@ -87,15 +87,15 @@ def reset_sim():
     link1.color = [1, 0.9, 0.9]
     link1.pos = np.array([0.0, 0.0, 0.0])
     link1.vel = np.array([0.0, 0.0, 0.0])
-    link1.theta = 0.0
+    link1.theta = np.pi/2
     link1.omega = np.array([0., 0., 0.])
 
     link2.set_cuboid(1.0, 0.04, 1.0, 0.12)
     link2.color = [0.9, 0.9, 1.0]
-    link2.pos = np.array([0.0, -1.0, 0.0])
+    link2.pos = np.array([1.0, 0.0, 0.0])
     link2.vel = np.array([0.0, 0.0, 0.0])
-    link2.theta = 0.0
-    link2.omega = np.array([0., 0., -0.1])  # radians per second
+    link2.theta = np.pi/2
+    link2.omega = np.array([0., 0., 0.0])  # radians per second
 
 
 def key_pressed(key, x, y):
@@ -155,18 +155,18 @@ def simulate_world():
     mat = np.zeros((dim, dim))
     mat[0:3, 0:3] = M1
     mat[0:3, 12:15] = -np.identity(3)
-    mat[0:3, 15:18] = -np.identity(3)
+    # mat[0:3, 15:18] = -np.identity(3)
     mat[3:6, 3:6] = I1
     mat[3:6, 12:15] = -funky_r0
-    mat[3:6, 15:18] = -funky_r1
+    # mat[3:6, 15:18] = -funky_r1
     mat[6:9, 6:9] = M2
     mat[6:9, 15:18] = np.identity(3)
     mat[9:12, 9:12] = I2
     mat[9:12, 15:18] = funky_r2
     mat[12:15, 0:3] = -np.identity(3)
     mat[12:15, 3:6] = funky_r0
-    mat[15:18, 0:3] = -np.identity(3)
-    mat[15:18, 3:6] = funky_r1
+    # mat[15:18, 0:3] = -np.identity(3)
+    # mat[15:18, 3:6] = funky_r1
     mat[15:18, 6:9] = np.identity(3)
     mat[15:18, 9:12] = -funky_r2
     # solve
@@ -184,9 +184,11 @@ def simulate_world():
     # print(f1, f2)
 
     # show error - diff between point accelerations
-    p1c_acc = acc1 + np.cross(omega_dot1, r1) + np.cross(w1, np.cross(w1, r1))
-    p2c_acc = acc2 + np.cross(omega_dot2, r2) + np.cross(w2, np.cross(w2, r2))
-    print(np.linalg.norm(p1c_acc-p2c_acc))
+    # p1c_acc = acc1 + np.cross(omega_dot1, r1) + np.cross(w1, np.cross(w1, r1))
+    # p2c_acc = acc2 + np.cross(omega_dot2, r2) + np.cross(w2, np.cross(w2, r2))
+    # print(np.linalg.norm(p1c_acc-p2c_acc))
+
+    print(omega_dot1, omega_dot2)
 
     # explicit Euler integration to update the state
     link1.pos += link1.vel * dT
