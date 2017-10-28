@@ -2,12 +2,16 @@ from OpenGL.GL import *
 from OpenGL.GLUT import *
 from OpenGL.GLU import *
 import sys
+import argparse
+
+import matplotlib.pyplot as plt
 
 #  from pyquaternion import Quaternion    # would be useful for 3D simulation
 import numpy as np
 
 
 def funkify(v):
+    """Returns a skew-symmetric matrix M for input vector v such that cross(v, k) = M @ k"""
     return np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
 
 
@@ -25,6 +29,7 @@ class Link(object):
         self.display_force = np.array([0.0, 0.0, 0.0])
 
     def draw(self):  # steps to draw a link
+        """Render the link with OpenGL"""
         glPushMatrix()  # save copy of coord frame
         glTranslatef(self.pos[0], self.pos[1], self.pos[2])  # move
         glRotatef(self.theta * (180/np.pi), 0, 0, 1)  # rotate
@@ -38,12 +43,13 @@ class Link(object):
         glEnd()
 
     def set_cuboid(self, mass, w, h, d):
-        """Creates a cuboid of the specified width, depth and height (x, y, z respectively)"""
+        """Initializes link to a cuboid of the specified mass width, depth and height (x, y, z respectively)"""
         self.mass = mass
         self.inertia = mass/12 * np.array([[h**2+d**2, 0, 0], [0, w**2+d**2, 0], [0, 0, w**2+h**2]])
         self.size = np.array([w, h, d])
 
     def get_r(self):
+        """Return the world-space vector from the link's center to its upper hinge joint"""
         return (self.size[1]/2)*np.array([-np.sin(self.theta), np.cos(self.theta), 0])
 
     @staticmethod
@@ -142,14 +148,34 @@ class Sim(object):
         self.link_length = 0.5
         self.link_thickness = 0.04
         self.link_mass = 1.0
-        self.kp = 1.0
-        self.kd = 0.5
-        self.damp = 0.2
+        self.kp = 3.0
+        self.kd = 1.0
+        self.damp = 0.05
         self.links = []
         self.sim_running = False
         self.sim_time = 0.0
 
+        self.args = None
+        self.energies = []
+        self.potentials = []
+        self.times = []
+
+    def plot_energies(self):
+        lines1 = plt.plot(self.times, self.energies)
+        lines2 = plt.plot(self.times, self.potentials)
+        totals = np.array(self.energies) + self.potentials
+        lines3 = plt.plot(self.times, totals)
+        plt.legend(('E', 'PE', 'Total'), loc='best')
+        plt.ylabel('energy')
+        plt.xlabel('time (s)')
+        plt.show()
+
     def main(self):
+        # parse args
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-t", "--track", action="store_true")
+        self.args = parser.parse_args()
+
         glutInit(sys.argv)
         glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)  # display mode
         glutInitWindowSize(640, 480)  # window size
@@ -176,6 +202,10 @@ class Sim(object):
 
         # clear existing links
         self.links = []
+        # clear stored energies
+        self.energies = []
+        self.potentials = []
+        self.times = []
 
         # first link
         # links MUST start at rest
@@ -210,7 +240,20 @@ class Sim(object):
         elif ch == 'q':  # quit
             sys.exit()
         elif ch == 'r':  # reset simulation
-            self.reset_sim(8)
+            self.reset_sim(len(self.links))
+        elif ch == '+':
+            n = len(self.links)
+            n2 = min(8, n+1)
+            if n2 != n:
+                self.reset_sim(n2)
+        elif ch == '-':
+            n = len(self.links)
+            n2 = max(1, n-1)
+            if n2 != n:
+                self.reset_sim(n2)
+        elif ch == 's' and self.args.track:
+            # display tracked energies over time
+            self.plot_energies()
 
     def simulate_world(self):
         if not self.sim_running:  # is simulation stopped?
@@ -287,13 +330,35 @@ class Sim(object):
                 link.vel += acc * self.dT
                 link.theta += link.omega[2] * self.dT
                 link.omega += w_dot * self.dT
+
+            # track values over time
+            if self.args.track:
+                energy = self.sum_energy()
+                self.energies.append(energy[0])
+                self.potentials.append(energy[1])
+                self.times.append(self.sim_time)
+
             self.sim_time += self.dT
+
 
         # draw the updated state
         self.draw_world()
-        print("simTime=%.2f" % self.sim_time)
+        energy = self.sum_energy()
+        print("t=%.2f E=%.2f, total energy=%.2f" % (self.sim_time, energy[0], energy[1]+energy[0]))
 
         # print("Diff from anchor: ", self.links[0].pos + self.links[0].get_r() - self.anchor)
+
+    def sum_energy(self):
+        energy = 0.0
+        pe = 0.0
+        # track minimum reachable height for each link
+        min_height = self.anchor[1] - 0.5*self.link_length
+        for link in self.links:
+            energy += 0.5*link.mass*np.linalg.norm(link.vel)**2
+            energy += 0.5*link.inertia[2, 2]*link.omega[2]**2
+            pe += link.mass*(-self.GRAVITY)*(link.pos[1] - min_height)
+            min_height -= self.link_length
+        return energy, pe
 
     def draw_world(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # Clear The Screen And The Depth Buffer
@@ -355,6 +420,6 @@ class Sim(object):
         glEnd()
 
 
-print("Hit ESC key to quit.")
+print("Hit ESC/q to quit, r to reset, + and - to add or remove links (resetting the simulation).")
 sim = Sim()
 sim.main()
