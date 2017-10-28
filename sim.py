@@ -6,7 +6,7 @@ import argparse
 
 import matplotlib.pyplot as plt
 
-#  from pyquaternion import Quaternion    # would be useful for 3D simulation
+from pyquaternion import Quaternion    # would be useful for 3D simulation
 import numpy as np
 
 
@@ -21,7 +21,7 @@ class Link(object):
         self.size = [1, 1, 1]  # dimensions
         self.mass = 1.0  # mass in kg
         self.inertia = np.identity(3)
-        self.theta = 0  # 2D orientation  (will need to change for 3D)
+        self.q_rot = Quaternion()  # 2D orientation  (will need to change for 3D)
         self.omega = np.array([0.0, 0.0, 0.0])
         self.pos = np.array([0.0, 0.0, 0.0])
         self.vel = np.array([0.0, 0.0, 0.0])
@@ -32,7 +32,8 @@ class Link(object):
         """Render the link with OpenGL"""
         glPushMatrix()  # save copy of coord frame
         glTranslatef(self.pos[0], self.pos[1], self.pos[2])  # move
-        glRotatef(self.theta * (180/np.pi), 0, 0, 1)  # rotate
+        # glRotatef(self.theta * (180/np.pi), 0, 0, 1)  # rotate
+        glMultMatrixf(self.q_rot.transformation_matrix.T)
         glScale(self.size[0], self.size[1], self.size[2])  # set size
         glColor3f(self.color[0], self.color[1], self.color[2])  # set colour
         self.draw_cube()  # draw a scaled cube
@@ -50,7 +51,8 @@ class Link(object):
 
     def get_r(self):
         """Return the world-space vector from the link's center to its upper hinge joint"""
-        return (self.size[1]/2)*np.array([-np.sin(self.theta), np.cos(self.theta), 0])
+        # return (self.size[1]/2)*np.array([-np.sin(self.theta), np.cos(self.theta), 0])
+        return self.q_rot.rotation_matrix @ np.array([0, self.size[1]/2, 0])
 
     @staticmethod
     def draw_cube():
@@ -161,10 +163,10 @@ class Sim(object):
         self.times = []
 
     def plot_energies(self):
-        lines1 = plt.plot(self.times, self.energies)
-        lines2 = plt.plot(self.times, self.potentials)
+        plt.plot(self.times, self.energies)
+        plt.plot(self.times, self.potentials)
         totals = np.array(self.energies) + self.potentials
-        lines3 = plt.plot(self.times, totals)
+        plt.plot(self.times, totals)
         plt.legend(('E', 'PE', 'Total'), loc='best')
         plt.ylabel('energy')
         plt.xlabel('time (s)')
@@ -198,7 +200,9 @@ class Sim(object):
         self.sim_time = 0
 
         colors = ([0.5, 0.5, 0.5], [0.9, 0.9, 0.9])
-        angle = np.pi/4
+        angle = np.pi/2
+        axis = np.array([1, 0, 1])
+        axis = axis / np.linalg.norm(axis)
 
         # clear existing links
         self.links = []
@@ -212,7 +216,7 @@ class Sim(object):
         link = Link()
         link.set_cuboid(self.link_mass, self.link_thickness, self.link_length, self.link_thickness)
         link.color = colors[0]
-        link.theta = angle
+        link.q_rot = Quaternion(axis=axis, angle=angle)
         link.pos = self.anchor - link.get_r()
         self.links.append(link)
         print("pos 0", link.pos)
@@ -222,7 +226,7 @@ class Sim(object):
             prev_link = self.links[i-1]
             link.set_cuboid(self.link_mass, self.link_thickness, self.link_length, self.link_thickness)
             link.color = colors[i % 2]
-            link.theta = angle
+            link.q_rot = Quaternion(axis=axis, angle=angle)
             link.pos = prev_link.pos - prev_link.get_r() - link.get_r()
             self.links.append(link)
             print("pos ", i, link.pos)
@@ -280,7 +284,8 @@ class Sim(object):
                 m = link.mass * np.identity(3)
                 mat[i*6:i*6+3, i*6:i*6+3] = m
                 rhs[i*6:i*6+3] = m @ grav
-                ir = link.inertia
+                rot = link.q_rot.rotation_matrix
+                ir = rot @ link.inertia @ rot.T
                 mat[i*6+3:i*6+6, i*6+3:i*6+6] = ir
                 w = link.omega
                 r = link.get_r()
@@ -328,7 +333,10 @@ class Sim(object):
                 # explicit euler integration
                 link.pos += link.vel * self.dT
                 link.vel += acc * self.dT
-                link.theta += link.omega[2] * self.dT
+                w_mag = np.linalg.norm(link.omega)
+                if w_mag != 0.0:
+                    axis = link.omega / w_mag
+                    link.q_rot *= Quaternion(axis=axis, angle=w_mag*self.dT)  # link.omega[2] * self.dT
                 link.omega += w_dot * self.dT
 
             # track values over time
@@ -355,7 +363,7 @@ class Sim(object):
         min_height = self.anchor[1] - 0.5*self.link_length
         for link in self.links:
             energy += 0.5*link.mass*np.linalg.norm(link.vel)**2
-            energy += 0.5*link.inertia[2, 2]*link.omega[2]**2
+            # energy += 0.5*link.inertia[2, 2]*link.omega[2]**2
             pe += link.mass*(-self.GRAVITY)*(link.pos[1] - min_height)
             min_height -= self.link_length
         return energy, pe

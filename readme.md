@@ -1,10 +1,11 @@
 # Pendulum Simulation
-Here I've implemented a simple rigid-body pendulum simulation from Newton-Euler equations of motion, using explicit Euler integration, rotational damping, and Baumgarte stabilization of the hinge constraints. 1-8 links are combined into a matrix defining their equations of motion and mutual constraints, which is solved using Numpy's `linalg.solve` function.
+Here I've implemented a 3D multi-link, rigid-body pendulum simulation from the Newton-Euler equations of motion, using explicit Euler integration, rotational damping, and Baumgarte stabilization of the hinge constraints. 1-8 links are combined into a single matrix representing the linear system of motion and constraints, which is solved using Numpy's `linalg.solve` function. The link's 3D rotations are stored and manipulated using quaternions.
 
 ## Instructions
 Requires:
 * Python (I use 3.5)
 * Numpy
+* Pyquaternion
 * PyOpenGL
 * PyOpenGL-accelerate
 * Matplotlib
