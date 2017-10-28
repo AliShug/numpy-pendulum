@@ -6,7 +6,7 @@ import argparse
 
 import matplotlib.pyplot as plt
 
-from pyquaternion import Quaternion    # would be useful for 3D simulation
+from pyquaternion import Quaternion
 import numpy as np
 
 
@@ -17,27 +17,26 @@ def funkify(v):
 
 class Link(object):
     def __init__(self):
-        self.color = [0, 0, 0]  # draw color
-        self.size = [1, 1, 1]  # dimensions
-        self.mass = 1.0  # mass in kg
+        self.color = [0, 0, 0]
+        self.size = [1, 1, 1]
+        self.mass = 1.0
         self.inertia = np.identity(3)
-        self.q_rot = Quaternion()  # 2D orientation  (will need to change for 3D)
+        self.q_rot = Quaternion()
         self.omega = np.array([0.0, 0.0, 0.0])
         self.pos = np.array([0.0, 0.0, 0.0])
         self.vel = np.array([0.0, 0.0, 0.0])
 
         self.display_force = np.array([0.0, 0.0, 0.0])
 
-    def draw(self):  # steps to draw a link
+    def draw(self):
         """Render the link with OpenGL"""
-        glPushMatrix()  # save copy of coord frame
-        glTranslatef(self.pos[0], self.pos[1], self.pos[2])  # move
-        # glRotatef(self.theta * (180/np.pi), 0, 0, 1)  # rotate
+        glPushMatrix()
+        glTranslatef(self.pos[0], self.pos[1], self.pos[2])
         glMultMatrixf(self.q_rot.transformation_matrix.T)
-        glScale(self.size[0], self.size[1], self.size[2])  # set size
-        glColor3f(self.color[0], self.color[1], self.color[2])  # set colour
-        self.draw_cube()  # draw a scaled cube
-        glPopMatrix()  # restore old coord frame
+        glScale(self.size[0], self.size[1], self.size[2])
+        glColor3f(self.color[0], self.color[1], self.color[2])
+        self.draw_cube()
+        glPopMatrix()
         glBegin(GL_LINES)
         glVertex3fv(self.pos + self.get_r())
         glVertex3fv(self.pos + self.get_r() + self.display_force)
@@ -139,7 +138,7 @@ class Link(object):
 
 class Sim(object):
     def __init__(self):
-        self.window = 0  # number of the glut window
+        self.window = 0
         self.theta = 0.0
         self.sim_time = 0
         self.dT = 0.003
@@ -150,9 +149,13 @@ class Sim(object):
         self.link_length = 0.5
         self.link_thickness = 0.04
         self.link_mass = 1.0
-        self.kp = 3.0
+        self.kp = 20.0
         self.kd = 1.0
-        self.damp = 0.05
+        self.cp = 4000.0
+        self.cd = 50.0
+        self.damp = 0.08
+        self.plane = True
+        self.plane_height = 0.0
         self.links = []
         self.sim_running = False
         self.sim_time = 0.0
@@ -177,22 +180,21 @@ class Sim(object):
         parser = argparse.ArgumentParser()
         parser.add_argument("-t", "--track", action="store_true")
         self.args = parser.parse_args()
-
+        # set up the GLUT window
         glutInit(sys.argv)
         glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)  # display mode
-        glutInitWindowSize(640, 480)  # window size
-        glutInitWindowPosition(0, 0)  # window coords for mouse start at top-left
+        glutInitWindowSize(640, 480)
+        glutInitWindowPosition(0, 0)
         self.window = glutCreateWindow(b"CPSC 526 Simulation Template")
-        glutDisplayFunc(self.draw_world)  # register the function to draw the world
-        # glutFullScreen()               # full screen
-        glutIdleFunc(self.simulate_world)  # when doing nothing, redraw the scene
-        glutReshapeFunc(self.resize_gl_scene)  # register the function to call when window is resized
-        glutKeyboardFunc(self.key_pressed)  # register the function to call when keyboard is pressed
-        self.init_gl(640, 480)  # initialize window
-
+        glutDisplayFunc(self.draw_world)
+        glutIdleFunc(self.simulate_world)
+        glutReshapeFunc(self.resize_gl_scene)
+        glutKeyboardFunc(self.key_pressed)
+        self.init_gl(640, 480)
+        # initialize the simulation
         self.reset_sim(2)
-
-        glutMainLoop()  # start event processing loop
+        # event processing loop
+        glutMainLoop()
 
     def reset_sim(self, num_links):
         print("Simulation reset")
@@ -258,6 +260,8 @@ class Sim(object):
         elif ch == 's' and self.args.track:
             # display tracked energies over time
             self.plot_energies()
+        elif ch == 'p':
+            self.plane = not self.plane
 
     def simulate_world(self):
         if not self.sim_running:  # is simulation stopped?
@@ -281,16 +285,23 @@ class Sim(object):
                     anchor = None
                 else:
                     anchor = self.links[i-1]
+                w = link.omega
+                r = link.get_r()
+                # penalty force (ground plane)
+                if self.plane:
+                    pt = link.pos - r
+                    vel = link.vel + np.cross(w, -r)
+                    fp = max(0, self.cp*(self.plane_height - pt[1]) - self.cd*vel[1])
+                else:
+                    fp = 0.0
                 m = link.mass * np.identity(3)
                 mat[i*6:i*6+3, i*6:i*6+3] = m
-                rhs[i*6:i*6+3] = m @ grav
+                rhs[i*6:i*6+3] = m @ grav + [0, fp, 0]
                 rot = link.q_rot.rotation_matrix
                 ir = rot @ link.inertia @ rot.T
                 mat[i*6+3:i*6+6, i*6+3:i*6+6] = ir
-                w = link.omega
-                r = link.get_r()
                 r_s = funkify(r)
-                rhs[i*6+3:i*6+6] = -np.cross(w, ir@w) - self.damp*w
+                rhs[i*6+3:i*6+6] = -np.cross(w, ir@w) - self.damp*w - np.cross(r, [0, fp, 0])
                 if i == 0:
                     # first link has space-anchored constraint
                     pos_drift = (link.pos + r) - self.anchor
@@ -300,8 +311,8 @@ class Sim(object):
                     # first constraint
                     mat[offs+i*3:offs+i*3+3, 0:3] = -np.identity(3)
                     mat[offs+i*3:offs+i*3+3, 3:6] = r_s
-                    rhs[offs+i*3:offs+i*3+3] =\
-                        np.cross(w, np.cross(w, r)) +\
+                    rhs[offs+i*3:offs+i*3+3] = \
+                        np.cross(w, np.cross(w, r)) + \
                         self.kp*pos_drift + self.kd*vel_drift
                 else:
                     # subsequent links anchor to the previous link in the chain
@@ -319,8 +330,8 @@ class Sim(object):
                     mat[offs+i*3:offs+i*3+3, i*6-3:i*6] = ra_s
                     mat[offs+i*3:offs+i*3+3, i*6:i*6+3] = np.identity(3)
                     mat[offs+i*3:offs+i*3+3, i*6+3:i*6+6] = -r_s
-                    rhs[offs+i*3:offs+i*3+3] =\
-                        np.cross(wa, np.cross(wa, ra)) - np.cross(w, np.cross(w, r)) -\
+                    rhs[offs+i*3:offs+i*3+3] = \
+                        np.cross(wa, np.cross(wa, ra)) - np.cross(w, np.cross(w, r)) - \
                         self.kp*pos_drift - self.kd*vel_drift
 
             # solve
@@ -334,7 +345,7 @@ class Sim(object):
                 link.pos += link.vel * self.dT
                 link.vel += acc * self.dT
                 w_mag = np.linalg.norm(link.omega)
-                if w_mag != 0.0:
+                if w_mag != 0.0 and w_mag < 1000000 and not np.isnan(w_mag):
                     axis = link.omega / w_mag
                     link.q_rot *= Quaternion(axis=axis, angle=w_mag*self.dT)  # link.omega[2] * self.dT
                 link.omega += w_dot * self.dT
@@ -359,17 +370,24 @@ class Sim(object):
     def sum_energy(self):
         energy = 0.0
         pe = 0.0
-        # track minimum reachable height for each link
+        # track minimum reachable height for each link, including ground plane
         min_height = self.anchor[1] - 0.5*self.link_length
+        if self.plane:
+            min_height = max(self.plane_height, min_height)
         for link in self.links:
             energy += 0.5*link.mass*np.linalg.norm(link.vel)**2
             # energy += 0.5*link.inertia[2, 2]*link.omega[2]**2
+            w = link.omega
+            ir = link.inertia
+            energy += 0.5*(ir[0, 0]*w[0]**2 + ir[1, 1]*w[1]**2 + ir[2, 2]*w[2]**2)
             pe += link.mass*(-self.GRAVITY)*(link.pos[1] - min_height)
             min_height -= self.link_length
+            if self.plane:
+                min_height = max(self.plane_height, min_height)
         return energy, pe
 
     def draw_world(self):
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)  # Clear The Screen And The Depth Buffer
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
         gluLookAt(1, 1, 3, 0, 0, 0, 0, 1, 0)
 
@@ -377,18 +395,18 @@ class Sim(object):
         for link in self.links:
             link.draw()
 
-        glutSwapBuffers()  # swap the buffers to display what was just drawn
+        glutSwapBuffers()
 
     @staticmethod
-    def init_gl(width, height):  # We call this right after our OpenGL window is created.
-        glClearColor(1.0, 1.0, 0.9, 0.0)  # This Will Clear The Background Color To Black
-        glClearDepth(1.0)  # Enables Clearing Of The Depth Buffer
-        glDepthFunc(GL_LESS)  # The Type Of Depth Test To Do
-        glEnable(GL_DEPTH_TEST)  # Enables Depth Testing
+    def init_gl(width, height):
+        glClearColor(1.0, 1.0, 1.0, 0.0)
+        glClearDepth(1.0)
+        glDepthFunc(GL_LESS)
+        glEnable(GL_DEPTH_TEST)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glEnable(GL_LINE_SMOOTH)
-        glShadeModel(GL_SMOOTH)  # Enables Smooth Color Shading
+        glShadeModel(GL_SMOOTH)
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()  # Reset The Projection Matrix
         gluPerspective(45.0, float(width) / float(height), 0.1, 100.0)
